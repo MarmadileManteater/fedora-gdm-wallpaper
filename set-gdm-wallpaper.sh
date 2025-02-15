@@ -16,6 +16,8 @@ if [ "$#" -eq "0" ]; then
   echo 'Usage:'
   echo '  set-gdm-wallpaper [FLAG] /path/to/image    Set login screen wallpaper'
   echo '    Flags:'
+  echo '      --debug'
+  # echo '      --dark-image /path/to/image            Use different image for dark mode' 
   echo '      --css 'css data'                       Replace css params inside #lockDialogGroup block. Ex: background-size: 1920px 1080px;'
   echo '      --resize 0..6 (default: 2)             Use built-in css template for image resize and alignment. Try this option for fix multi monitor issue. Use 0 for disable resize.'
   echo '        0 - background-repeat: repeat;'
@@ -47,6 +49,12 @@ if [ "$1" = "--css" ]; then
   shift;shift;
 fi
 
+debug=0
+if [ "$1" = "--debug" ]; then
+  debug=1
+  shift;
+fi
+
 if [ "$1" = "--resize" ]; then
   case "$2" in
     0) image_parameters="background-repeat: repeat;";;
@@ -63,6 +71,12 @@ if [ "$1" = "--resize" ]; then
   shift;shift;
 fi
 
+dark_mode_image=""
+if [ "$1" = "--dark-image" ]; then
+  dark_mode_image="$2"
+  shift;shift;
+fi
+
   if [ "$#" -ne "1" ]; then
     echo "Error: Illegal argument $1"
     exit 1
@@ -73,6 +87,11 @@ image="$(realpath "$1")"
 if [ ! -f "$image" ]; then
   echo "File not found: \"$image\" "
   exit 1
+fi
+
+if [ "$dark_mode_image" == "" ]
+then
+  dark_mode_image="$image"
 fi
 
 echo "Updating wallpaper..."
@@ -102,25 +121,50 @@ for res_file in $(gresource list /usr/share/gnome-shell/gnome-shell-theme.gresou
   fi
 done
 
+# determine if dark/light mode exist
+has_light_dark_themes=0
+if [ -f "$workdir/org/gnome/shell/theme/gnome-shell.css" ]; then
+    has_light_dark_themes=0
+fi
+
+if [ -f "$workdir/org/gnome/shell/theme/gnome-shell-dark.css" ]; then
+    has_light_dark_themes=1
+fi
+
 # add our image ($image) to theme path and to xml file
 echo "<file>org/gnome/shell/theme/wallpaper-gdm.png</file>" >>"$workdir/gnome-shell-theme.gresource.xml"
 cp -f "$image" "$workdir/org/gnome/shell/theme/wallpaper-gdm.png"
 
+if [ $has_light_dark_themes == 1 ]; then
+    echo "<file>org/gnome/shell/theme/wallpaper-gdm-dark.png</file>" >>"$workdir/gnome-shell-theme.gresource.xml"
+    cp -f "$dark_mode_image" "$workdir/org/gnome/shell/theme/wallpaper-gdm-dark.png"
+fi
+
 # add footer to xml file
 echo '</gresource></gresources>' >>"$workdir/gnome-shell-theme.gresource.xml"
 
-
-# find #lockDialogGroup block inside gnome-shell.css and replace with new_theme_params with our image
-# and add image_parameters
-new_theme_params="background: #2e3436 url(resource:\/\/\/org\/gnome\/shell\/theme\/wallpaper-gdm.png);$image_parameters"
-sed -i -z -E "s/#lockDialogGroup \{[^}]+/#lockDialogGroup \{$new_theme_params/g" "$workdir/org/gnome/shell/theme/gnome-shell.css"
-
-# fix gdm 44
-echo '
+fix_gnome_shell_css() {
+    # find #lockDialogGroup block inside gnome-shell.css and replace with new_theme_params with our image
+    # and add image_parameters
+    new_theme_params="background: #2e3436 url(resource:\/\/\/org\/gnome\/shell\/theme\/$2.png);$image_parameters"
+    sed -i -z -E "s/#lockDialogGroup \{[^}]+/#lockDialogGroup \{$new_theme_params/g" "$workdir/org/gnome/shell/theme/$1.css"
+    # fix gdm 44
+    echo '
 .login-dialog {
 background-color: transparent;
 }
-' >>"$workdir/org/gnome/shell/theme/gnome-shell.css"
+' >>"$workdir/org/gnome/shell/theme/$1.css"
+}
+
+
+if [ $has_light_dark_themes == 1 ]; then
+    fix_gnome_shell_css gnome-shell-dark wallpaper-gdm-dark
+    # doesn't seem to work, idk why
+    # TODO fix light mode not showing up for some reason
+    fix_gnome_shell_css gnome-shell-light wallpaper-gdm
+else
+    fix_gnome_shell_css gnome-shell wallpaper-gdm
+fi
 
 # create gresource file with file list inside gnome-shell-theme.gresource.xml
 glib-compile-resources "$workdir/gnome-shell-theme.gresource.xml"
@@ -134,10 +178,15 @@ fi
 
 cp -f "$workdir/gnome-shell-theme.gresource" /usr/share/gnome-shell/
 
-# Strange but safe from bug
-rm -rf "$workdir/org"
-rm -f "$workdir/gnome-shell-theme.gresource.xml"
-rm -f "$workdir/gnome-shell-theme.gresource"
-rm -r "$workdir"
-
+if [ $debug == 0 ]; then
+    # Strange but safe from bug
+    rm -rf "$workdir/org"
+    rm -f "$workdir/gnome-shell-theme.gresource.xml"
+    rm -f "$workdir/gnome-shell-theme.gresource"
+    rm -r "$workdir"
+else
+    echo "Leaving workdir due to --debug flag"
+    echo "dir: $workdir"
+    chmod 755 $workdir
+fi
 echo "Done!"
